@@ -23,10 +23,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
-
-	"github.com/prometheus/tsdb/fileutil"
 
 	"github.com/ethereum/go-ethereum/cmd/utils"
 	"github.com/ethereum/go-ethereum/common"
@@ -39,14 +38,16 @@ import (
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/eth/ethconfig"
 	"github.com/ethereum/go-ethereum/ethdb"
-	"github.com/ethereum/go-ethereum/internal/flags"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/metrics"
 	"github.com/ethereum/go-ethereum/node"
+	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/ethereum/go-ethereum/trie"
 	"github.com/ethereum/go-ethereum/triedb"
-	cli "github.com/urfave/cli/v2"
+	"github.com/ethereum/go-ethereum/triedb/pathdb"
+	"github.com/prometheus/tsdb/fileutil"
+	"github.com/urfave/cli/v2"
 )
 
 var (
@@ -60,7 +61,7 @@ var (
 				Usage:     "Prune stale ethereum state data based on the snapshot",
 				ArgsUsage: "<root>",
 				Action:    pruneState,
-				Flags: flags.Merge([]cli.Flag{
+				Flags: slices.Concat([]cli.Flag{
 					utils.BloomFilterSizeFlag,
 					utils.TriesInMemoryFlag,
 				}, utils.NetworkFlags, utils.DatabaseFlags),
@@ -92,7 +93,7 @@ WARNING: it's only supported in hash mode(--state.scheme=hash)".
 geth offline prune-block for block data in ancientdb.
 The amount of blocks expected for remaining after prune can be specified via block-amount-reserved in this command,
 will prune and only remain the specified amount of old block data in ancientdb.
-the brief workflow is to backup the the number of this specified amount blocks backward in original ancientdb 
+the brief workflow is to backup the number of this specified amount blocks backward in original ancientdb
 into new ancient_backup, then delete the original ancientdb dir and rename the ancient_backup to original one for replacement,
 finally assemble the statedb and new ancientDb together.
 The purpose of doing it is because the block data will be moved into the ancient store when it
@@ -105,7 +106,7 @@ so it's very necessary to do block data prune, this feature will handle it.
 				Usage:     "Recalculate state hash based on the snapshot for verification",
 				ArgsUsage: "<root>",
 				Action:    verifyState,
-				Flags:     flags.Merge(utils.NetworkFlags, utils.DatabaseFlags),
+				Flags:     slices.Concat(utils.NetworkFlags, utils.DatabaseFlags),
 				Description: `
 geth snapshot verify-state <state-root>
 will traverse the whole accounts and storages set based on the specified
@@ -141,7 +142,7 @@ the trie clean cache with default directory will be deleted.
 				Usage:     "Check that there is no 'dangling' snap storage",
 				ArgsUsage: "<root>",
 				Action:    checkDanglingStorage,
-				Flags:     flags.Merge(utils.NetworkFlags, utils.DatabaseFlags),
+				Flags:     slices.Concat(utils.NetworkFlags, utils.DatabaseFlags),
 				Description: `
 geth snapshot check-dangling-storage <state-root> traverses the snap storage
 data, and verifies that all snapshot storage data has a corresponding account.
@@ -149,10 +150,10 @@ data, and verifies that all snapshot storage data has a corresponding account.
 			},
 			{
 				Name:      "inspect-account",
-				Usage:     "Check all snapshot layers for the a specific account",
+				Usage:     "Check all snapshot layers for the specific account",
 				ArgsUsage: "<address | hash>",
 				Action:    checkAccount,
-				Flags:     flags.Merge(utils.NetworkFlags, utils.DatabaseFlags),
+				Flags:     slices.Concat(utils.NetworkFlags, utils.DatabaseFlags),
 				Description: `
 geth snapshot inspect-account <address | hash> checks all snapshot layers and prints out
 information about the specified address.
@@ -163,7 +164,7 @@ information about the specified address.
 				Usage:     "Traverse the state with given root hash and perform quick verification",
 				ArgsUsage: "<root>",
 				Action:    traverseState,
-				Flags:     flags.Merge(utils.NetworkFlags, utils.DatabaseFlags),
+				Flags:     slices.Concat(utils.NetworkFlags, utils.DatabaseFlags),
 				Description: `
 geth snapshot traverse-state <state-root>
 will traverse the whole state from the given state root and will abort if any
@@ -178,7 +179,7 @@ It's also usable without snapshot enabled.
 				Usage:     "Traverse the state with given root hash and perform detailed verification",
 				ArgsUsage: "<root>",
 				Action:    traverseRawState,
-				Flags:     flags.Merge(utils.NetworkFlags, utils.DatabaseFlags),
+				Flags:     slices.Concat(utils.NetworkFlags, utils.DatabaseFlags),
 				Description: `
 geth snapshot traverse-rawstate <state-root>
 will traverse the whole state from the given root and will abort if any referenced
@@ -194,7 +195,7 @@ It's also usable without snapshot enabled.
 				Usage:     "Dump a specific block from storage (same as 'geth dump' but using snapshots)",
 				ArgsUsage: "[? <blockHash> | <blockNum>]",
 				Action:    dumpState,
-				Flags: flags.Merge([]cli.Flag{
+				Flags: slices.Concat([]cli.Flag{
 					utils.ExcludeCodeFlag,
 					utils.ExcludeStorageFlag,
 					utils.StartKeyFlag,
@@ -245,7 +246,16 @@ func accessDb(ctx *cli.Context, stack *node.Node) (ethdb.Database, error) {
 		NoBuild:    true,
 		AsyncBuild: false,
 	}
-	snaptree, err := snapshot.New(snapconfig, chaindb, triedb.NewDatabase(chaindb, nil), headBlock.Root(), TriesInMemory, false)
+	dbScheme := rawdb.ReadStateScheme(chaindb)
+	var config *triedb.Config
+	if dbScheme == rawdb.PathScheme {
+		config = &triedb.Config{
+			PathDB: utils.PathDBConfigAddJournalFilePath(stack, pathdb.ReadOnly),
+		}
+	} else if dbScheme == rawdb.HashScheme {
+		config = triedb.HashDefaults
+	}
+	snaptree, err := snapshot.New(snapconfig, chaindb, triedb.NewDatabase(chaindb, config), headBlock.Root(), TriesInMemory, false)
 	if err != nil {
 		log.Error("snaptree error", "err", err)
 		return nil, err // The relevant snapshot(s) might not exist
@@ -333,6 +343,9 @@ func pruneBlock(ctx *cli.Context) error {
 	stack, config = makeConfigNode(ctx)
 	defer stack.Close()
 	blockAmountReserved = ctx.Uint64(utils.BlockAmountReserved.Name)
+	if blockAmountReserved < params.FullImmutabilityThreshold {
+		return fmt.Errorf("block-amount-reserved must be greater than or equal to %d", params.FullImmutabilityThreshold)
+	}
 	chaindb, err = accessDb(ctx, stack)
 	if err != nil {
 		return err
@@ -355,7 +368,15 @@ func pruneBlock(ctx *cli.Context) error {
 	if !ctx.IsSet(utils.AncientFlag.Name) {
 		return errors.New("datadir.ancient must be set")
 	} else {
-		oldAncientPath = ctx.String(utils.AncientFlag.Name)
+		if stack.CheckIfMultiDataBase() {
+			ancientPath := ctx.String(utils.AncientFlag.Name)
+			index := strings.LastIndex(ancientPath, "/ancient/chain")
+			if index != -1 {
+				oldAncientPath = ancientPath[:index] + "/block/ancient/chain"
+			}
+		} else {
+			oldAncientPath = ctx.String(utils.AncientFlag.Name)
+		}
 		if !filepath.IsAbs(oldAncientPath) {
 			// force absolute paths, which often fail due to the splicing of relative paths
 			return errors.New("datadir.ancient not abs path")
@@ -401,7 +422,7 @@ func pruneBlock(ctx *cli.Context) error {
 	}
 
 	if _, err := os.Stat(newAncientPath); err == nil {
-		// No file lock found for old ancientDB but new ancientDB exsisted, indicating the geth was interrupted
+		// No file lock found for old ancientDB but new ancientDB existed, indicating the geth was interrupted
 		// after old ancientDB removal, this happened after backup successfully, so just rename the new ancientDB
 		if err := blockpruner.AncientDbReplacer(); err != nil {
 			log.Error("Failed to rename new ancient directory")
@@ -524,7 +545,7 @@ func verifyState(ctx *cli.Context) error {
 		log.Error("Failed to load head block")
 		return errors.New("no head block")
 	}
-	triedb := utils.MakeTrieDatabase(ctx, chaindb, false, true, false)
+	triedb := utils.MakeTrieDatabase(ctx, stack, chaindb, false, true, false)
 	defer triedb.Close()
 
 	snapConfig := snapshot.Config{
@@ -579,7 +600,7 @@ func traverseState(ctx *cli.Context) error {
 	chaindb := utils.MakeChainDatabase(ctx, stack, true, false)
 	defer chaindb.Close()
 
-	triedb := utils.MakeTrieDatabase(ctx, chaindb, false, true, false)
+	triedb := utils.MakeTrieDatabase(ctx, stack, chaindb, false, true, false)
 	defer triedb.Close()
 
 	headBlock := rawdb.ReadHeadBlock(chaindb)
@@ -688,7 +709,7 @@ func traverseRawState(ctx *cli.Context) error {
 	chaindb := utils.MakeChainDatabase(ctx, stack, true, false)
 	defer chaindb.Close()
 
-	triedb := utils.MakeTrieDatabase(ctx, chaindb, false, true, false)
+	triedb := utils.MakeTrieDatabase(ctx, stack, chaindb, false, true, false)
 	defer triedb.Close()
 
 	headBlock := rawdb.ReadHeadBlock(chaindb)
@@ -735,7 +756,7 @@ func traverseRawState(ctx *cli.Context) error {
 		log.Error("Failed to open iterator", "root", root, "err", err)
 		return err
 	}
-	reader, err := triedb.Reader(root)
+	reader, err := triedb.NodeReader(root)
 	if err != nil {
 		log.Error("State is non-existent", "root", root)
 		return nil
@@ -848,11 +869,15 @@ func dumpState(ctx *cli.Context) error {
 	stack, _ := makeConfigNode(ctx)
 	defer stack.Close()
 
-	conf, db, root, err := parseDumpConfig(ctx, stack)
+	db := utils.MakeChainDatabase(ctx, stack, true, false)
+	defer db.Close()
+
+	conf, root, err := parseDumpConfig(ctx, stack, db)
 	if err != nil {
 		return err
 	}
-	triedb := utils.MakeTrieDatabase(ctx, db, false, true, false)
+	defer db.Close()
+	triedb := utils.MakeTrieDatabase(ctx, stack, db, false, true, false)
 	defer triedb.Close()
 
 	snapConfig := snapshot.Config{
@@ -935,7 +960,7 @@ func snapshotExportPreimages(ctx *cli.Context) error {
 	chaindb := utils.MakeChainDatabase(ctx, stack, true, false)
 	defer chaindb.Close()
 
-	triedb := utils.MakeTrieDatabase(ctx, chaindb, false, true, false)
+	triedb := utils.MakeTrieDatabase(ctx, stack, chaindb, false, true, false)
 	defer triedb.Close()
 
 	var root common.Hash

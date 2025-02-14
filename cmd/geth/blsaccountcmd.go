@@ -12,16 +12,16 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/logrusorgru/aurora"
-	"github.com/prysmaticlabs/prysm/v4/crypto/bls"
-	"github.com/prysmaticlabs/prysm/v4/encoding/bytesutil"
-	"github.com/prysmaticlabs/prysm/v4/io/prompt"
-	validatorpb "github.com/prysmaticlabs/prysm/v4/proto/prysm/v1alpha1/validator-client"
-	"github.com/prysmaticlabs/prysm/v4/validator/accounts"
-	"github.com/prysmaticlabs/prysm/v4/validator/accounts/iface"
-	"github.com/prysmaticlabs/prysm/v4/validator/accounts/petnames"
-	"github.com/prysmaticlabs/prysm/v4/validator/accounts/wallet"
-	"github.com/prysmaticlabs/prysm/v4/validator/keymanager"
-	"github.com/prysmaticlabs/prysm/v4/validator/keymanager/local"
+	"github.com/prysmaticlabs/prysm/v5/crypto/bls"
+	"github.com/prysmaticlabs/prysm/v5/encoding/bytesutil"
+	"github.com/prysmaticlabs/prysm/v5/io/prompt"
+	validatorpb "github.com/prysmaticlabs/prysm/v5/proto/prysm/v1alpha1/validator-client"
+	"github.com/prysmaticlabs/prysm/v5/validator/accounts"
+	"github.com/prysmaticlabs/prysm/v5/validator/accounts/iface"
+	"github.com/prysmaticlabs/prysm/v5/validator/accounts/petnames"
+	"github.com/prysmaticlabs/prysm/v5/validator/accounts/wallet"
+	"github.com/prysmaticlabs/prysm/v5/validator/keymanager"
+	"github.com/prysmaticlabs/prysm/v5/validator/keymanager/local"
 	"github.com/urfave/cli/v2"
 	keystorev4 "github.com/wealdtech/go-eth2-wallet-encryptor-keystorev4"
 
@@ -220,12 +220,6 @@ Generate ownership proof for the selected BLS account from the BLS wallet. The p
 // blsWalletCreate creates a BLS wallet in <DATADIR>/bls/wallet.
 func blsWalletCreate(ctx *cli.Context) error {
 	cfg := gethConfig{Node: defaultNodeConfig()}
-	// Load config file.
-	if file := ctx.String(configFileFlag.Name); file != "" {
-		if err := loadConfig(file, &cfg); err != nil {
-			utils.Fatalf("%v", err)
-		}
-	}
 	utils.SetNodeConfig(ctx, &cfg.Node)
 
 	dir := filepath.Join(cfg.Node.DataDir, BLSWalletPath)
@@ -308,12 +302,6 @@ func openOrCreateBLSWallet(ctx *cli.Context, cfg *gethConfig) (*wallet.Wallet, e
 // and import the created account into the BLS wallet.
 func blsAccountCreate(ctx *cli.Context) error {
 	cfg := gethConfig{Node: defaultNodeConfig()}
-	// Load config file.
-	if file := ctx.String(configFileFlag.Name); file != "" {
-		if err := loadConfig(file, &cfg); err != nil {
-			utils.Fatalf("%v", err)
-		}
-	}
 	utils.SetNodeConfig(ctx, &cfg.Node)
 
 	w, _ := openOrCreateBLSWallet(ctx, &cfg)
@@ -392,12 +380,6 @@ func blsAccountCreate(ctx *cli.Context) error {
 // blsAccountImport imports a BLS account into the BLS wallet.
 func blsAccountImport(ctx *cli.Context) error {
 	cfg := gethConfig{Node: defaultNodeConfig()}
-	// Load config file.
-	if file := ctx.String(configFileFlag.Name); file != "" {
-		if err := loadConfig(file, &cfg); err != nil {
-			utils.Fatalf("%v", err)
-		}
-	}
 	utils.SetNodeConfig(ctx, &cfg.Node)
 
 	w, _ := openOrCreateBLSWallet(ctx, &cfg)
@@ -476,12 +458,6 @@ func blsAccountImport(ctx *cli.Context) error {
 // blsAccountList prints existing BLS accounts in the BLS wallet.
 func blsAccountList(ctx *cli.Context) error {
 	cfg := gethConfig{Node: defaultNodeConfig()}
-	// Load config file.
-	if file := ctx.String(configFileFlag.Name); file != "" {
-		if err := loadConfig(file, &cfg); err != nil {
-			utils.Fatalf("%v", err)
-		}
-	}
 	utils.SetNodeConfig(ctx, &cfg.Node)
 
 	walletDir := filepath.Join(cfg.Node.DataDir, BLSWalletPath)
@@ -555,12 +531,6 @@ func blsAccountDelete(ctx *cli.Context) error {
 	}
 
 	cfg := gethConfig{Node: defaultNodeConfig()}
-	// Load config file.
-	if file := ctx.String(configFileFlag.Name); file != "" {
-		if err := loadConfig(file, &cfg); err != nil {
-			utils.Fatalf("%v", err)
-		}
-	}
 	utils.SetNodeConfig(ctx, &cfg.Node)
 
 	walletDir := filepath.Join(cfg.Node.DataDir, BLSWalletPath)
@@ -653,12 +623,6 @@ func blsAccountGenerateProof(ctx *cli.Context) error {
 	}
 
 	cfg := gethConfig{Node: defaultNodeConfig()}
-	// Load config file.
-	if file := ctx.String(configFileFlag.Name); file != "" {
-		if err := loadConfig(file, &cfg); err != nil {
-			utils.Fatalf("%v", err)
-		}
-	}
 	utils.SetNodeConfig(ctx, &cfg.Node)
 
 	walletDir := filepath.Join(cfg.Node.DataDir, BLSWalletPath)

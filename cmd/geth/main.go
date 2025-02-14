@@ -20,10 +20,13 @@ package main
 import (
 	"fmt"
 	"os"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/ethereum/go-ethereum/params"
 
 	"github.com/ethereum/go-ethereum/accounts"
 	"github.com/ethereum/go-ethereum/accounts/keystore"
@@ -42,6 +45,7 @@ import (
 
 	// Force-load the tracer engines to trigger registration
 	_ "github.com/ethereum/go-ethereum/eth/tracers/js"
+	_ "github.com/ethereum/go-ethereum/eth/tracers/live"
 	_ "github.com/ethereum/go-ethereum/eth/tracers/native"
 
 	"github.com/urfave/cli/v2"
@@ -53,7 +57,7 @@ const (
 
 var (
 	// flags that configure the node
-	nodeFlags = flags.Merge([]cli.Flag{
+	nodeFlags = slices.Concat([]cli.Flag{
 		utils.IdentityFlag,
 		utils.UnlockedAccountFlag,
 		utils.PasswordFileFlag,
@@ -65,19 +69,20 @@ var (
 		utils.DirectBroadcastFlag,
 		utils.DisableSnapProtocolFlag,
 		utils.EnableTrustProtocolFlag,
-		utils.PipeCommitFlag,
 		utils.RangeLimitFlag,
 		utils.USBFlag,
 		utils.SmartCardDaemonPathFlag,
 		utils.RialtoHash,
-		utils.OverrideCancun,
+		utils.OverridePassedForkTime,
+		utils.OverridePascal,
+		utils.OverridePrague,
 		utils.OverrideVerkle,
-		utils.OverrideFeynman,
-		utils.OverrideFeynmanFix,
 		utils.OverrideFullImmutabilityThreshold,
 		utils.OverrideMinBlocksForBlobRequests,
 		utils.OverrideDefaultExtraReserveForBlobRequests,
-		utils.EnablePersonal,
+		utils.OverrideBreatheBlockInterval,
+		utils.OverrideFixedTurnLength,
+		utils.EnablePersonal, // deprecated
 		utils.TxPoolLocalsFlag,
 		utils.TxPoolNoLocalsFlag,
 		utils.TxPoolJournalFlag,
@@ -88,6 +93,7 @@ var (
 		utils.TxPoolGlobalSlotsFlag,
 		utils.TxPoolAccountQueueFlag,
 		utils.TxPoolGlobalQueueFlag,
+		utils.TxPoolOverflowPoolSlotsFlag,
 		utils.TxPoolLifetimeFlag,
 		utils.TxPoolReannounceTimeFlag,
 		utils.BlobPoolDataDirFlag,
@@ -103,6 +109,7 @@ var (
 		utils.TransactionHistoryFlag,
 		utils.StateHistoryFlag,
 		utils.PathDBSyncFlag,
+		utils.JournalFileFlag,
 		utils.LightServeFlag,       // deprecated
 		utils.LightIngressFlag,     // deprecated
 		utils.LightEgressFlag,      // deprecated
@@ -123,6 +130,7 @@ var (
 		utils.CacheSnapshotFlag,
 		// utils.CacheNoPrefetchFlag,
 		utils.CachePreimagesFlag,
+		utils.MultiDataBaseFlag,
 		utils.PersistDiffFlag,
 		utils.DiffBlockFlag,
 		utils.PruneAncientDataFlag,
@@ -140,10 +148,12 @@ var (
 		utils.MinerEtherbaseFlag,
 		utils.MinerExtraDataFlag,
 		utils.MinerRecommitIntervalFlag,
+		utils.MinerNewPayloadTimeoutFlag, // deprecated
 		utils.MinerDelayLeftoverFlag,
 		// utils.MinerNewPayloadTimeout,
 		utils.NATFlag,
 		utils.NoDiscoverFlag,
+		utils.PeerFilterPatternsFlag,
 		utils.DiscoveryV4Flag,
 		utils.DiscoveryV5Flag,
 		utils.InstanceFlag,
@@ -152,10 +162,12 @@ var (
 		utils.NodeKeyFileFlag,
 		utils.NodeKeyHexFlag,
 		utils.DNSDiscoveryFlag,
-		utils.DeveloperFlag,
-		utils.DeveloperGasLimitFlag,
-		utils.DeveloperPeriodFlag,
+		// utils.DeveloperFlag,
+		// utils.DeveloperGasLimitFlag,
+		// utils.DeveloperPeriodFlag,
 		utils.VMEnableDebugFlag,
+		utils.VMTraceFlag,
+		utils.VMTraceJsonConfigFlag,
 		utils.NetworkIdFlag,
 		utils.EthStatsURLFlag,
 		utils.NoCompactionFlag,
@@ -176,6 +188,14 @@ var (
 		utils.LogDebugFlag,
 		utils.LogBacktraceAtFlag,
 		utils.BlobExtraReserveFlag,
+		// utils.BeaconApiFlag,
+		// utils.BeaconApiHeaderFlag,
+		// utils.BeaconThresholdFlag,
+		// utils.BeaconNoFilterFlag,
+		// utils.BeaconConfigFlag,
+		// utils.BeaconGenesisRootFlag,
+		// utils.BeaconGenesisTimeFlag,
+		// utils.BeaconCheckpointFlag,
 	}, utils.NetworkFlags, utils.DatabaseFlags)
 
 	rpcFlags = []cli.Flag{
@@ -226,6 +246,12 @@ var (
 		utils.MetricsInfluxDBBucketFlag,
 		utils.MetricsInfluxDBOrganizationFlag,
 	}
+
+	fakeBeaconFlags = []cli.Flag{
+		utils.FakeBeaconEnabledFlag,
+		utils.FakeBeaconAddrFlag,
+		utils.FakeBeaconPortFlag,
+	}
 )
 
 var app = flags.NewApp("the go-ethereum command line interface")
@@ -274,12 +300,13 @@ func init() {
 	}
 	sort.Sort(cli.CommandsByName(app.Commands))
 
-	app.Flags = flags.Merge(
+	app.Flags = slices.Concat(
 		nodeFlags,
 		rpcFlags,
 		consoleFlags,
 		debug.Flags,
 		metricsFlags,
+		fakeBeaconFlags,
 	)
 	flags.AutoEnvVars(app.Flags, "GETH")
 
@@ -331,15 +358,12 @@ func prepare(ctx *cli.Context) {
   5. Networking is disabled; there is no listen-address, the maximum number of peers is set
      to 0, and discovery is disabled.
 `)
-
-	case !ctx.IsSet(utils.NetworkIdFlag.Name):
-		log.Info("Starting Geth on BSC mainnet...")
 	}
 	// If we're a full node on mainnet without --cache specified, bump default cache allowance
 	if !ctx.IsSet(utils.CacheFlag.Name) && !ctx.IsSet(utils.NetworkIdFlag.Name) {
 		// Make sure we're not on any supported preconfigured testnet either
-		if !ctx.IsSet(utils.DeveloperFlag.Name) &&
-			!ctx.IsSet(utils.ChapelFlag.Name) {
+		if !ctx.IsSet(utils.ChapelFlag.Name) &&
+			!ctx.IsSet(utils.DeveloperFlag.Name) {
 			// Nope, we're really on mainnet. Bump that cache up!
 			log.Info("Bumping default cache on mainnet", "provided", ctx.Int(utils.CacheFlag.Name), "updated", 4096)
 			ctx.Set(utils.CacheFlag.Name, strconv.Itoa(4096))
@@ -368,8 +392,6 @@ func geth(ctx *cli.Context) error {
 // it unlocks any requested accounts, and starts the RPC/IPC interfaces and the
 // miner.
 func startNode(ctx *cli.Context, stack *node.Node, backend ethapi.Backend, isConsole bool) {
-	debug.Memsize.Add("node", stack)
-
 	// Start up the node itself
 	utils.StartNode(ctx, stack, isConsole)
 
@@ -442,12 +464,17 @@ func startNode(ctx *cli.Context, stack *node.Node, backend ethapi.Backend, isCon
 	}
 
 	// Start auxiliary services if enabled
+	ethBackend, ok := backend.(*eth.EthAPIBackend)
+	gasCeil := ethBackend.Miner().GasCeil()
+	if gasCeil > params.SystemTxsGas {
+		ethBackend.TxPool().SetMaxGas(gasCeil - params.SystemTxsGas)
+	}
 	if ctx.Bool(utils.MiningEnabledFlag.Name) {
 		// Mining only makes sense if a full Ethereum node is running
 		if ctx.String(utils.SyncModeFlag.Name) == "light" {
 			utils.Fatalf("Light clients do not support mining")
 		}
-		ethBackend, ok := backend.(*eth.EthAPIBackend)
+
 		if !ok {
 			utils.Fatalf("Ethereum service not running")
 		}

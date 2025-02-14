@@ -8,30 +8,9 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/internal/version"
 	"github.com/ethereum/go-ethereum/log"
 )
-
-type BuilderConfig struct {
-	Address common.Address
-	URL     string
-}
-
-type MevConfig struct {
-	Enabled               bool            // Whether to enable Mev or not
-	BuilderFeeCeil        string          // The maximum builder fee of a bid
-	SentryURL             string          // The url of Mev sentry
-	Builders              []BuilderConfig // The list of builders
-	ValidatorCommission   uint64          // 100 means 1%
-	BidSimulationLeftOver time.Duration
-}
-
-var DefaultMevConfig = MevConfig{
-	Enabled:               false,
-	SentryURL:             "",
-	Builders:              nil,
-	ValidatorCommission:   100,
-	BidSimulationLeftOver: 50 * time.Millisecond,
-}
 
 // MevRunning return true if mev is running.
 func (miner *Miner) MevRunning() bool {
@@ -56,6 +35,11 @@ func (miner *Miner) AddBuilder(builder common.Address, url string) error {
 // RemoveBuilder removes a builder from the bid simulator.
 func (miner *Miner) RemoveBuilder(builderAddr common.Address) error {
 	return miner.bidSimulator.RemoveBuilder(builderAddr)
+}
+
+// HasBuilder returns true if the builder is in the builder list.
+func (miner *Miner) HasBuilder(builder common.Address) bool {
+	return miner.bidSimulator.ExistBuilder(builder)
 }
 
 func (miner *Miner) SendBid(ctx context.Context, bidArgs *types.BidArgs) (common.Hash, error) {
@@ -116,6 +100,8 @@ func (miner *Miner) MevParams() *types.MevParams {
 		ValidatorCommission:   miner.worker.config.Mev.ValidatorCommission,
 		BidSimulationLeftOver: miner.worker.config.Mev.BidSimulationLeftOver,
 		GasCeil:               miner.worker.config.GasCeil,
+		GasPrice:              miner.worker.config.GasPrice,
 		BuilderFeeCeil:        builderFeeCeil,
+		Version:               version.Semantic,
 	}
 }
